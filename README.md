@@ -1,7 +1,7 @@
 ## Prerequisites
 
 * Linux 
-* Node.js (Npm included)
+* Node.js (npm included)
 * Redis
 * Drupal 7.22
 
