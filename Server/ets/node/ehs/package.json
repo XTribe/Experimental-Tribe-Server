@@ -1,0 +1,13 @@
+{
+  "name": "ehs",
+  "version": "1.0.0",
+  "description": "Experiments handling system for the ETS project",
+  "author": "Claudio Cicali <claudio.cicali@gmail.com>",
+  "main": "ehs.js",
+  "dependencies": {
+    "redis": ">=0.6.7",
+    "step": ">=0.0.4",
+    "sockjs": ">=0.3.0"
+  },
+  "engine": "node >=0.6.0"
+}

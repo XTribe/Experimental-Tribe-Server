@@ -1,0 +1,53 @@
+
+{
+
+  "ets_key": "change me", // change this secret word
+
+  "run_as": "www-data", // linux user that runs the server
+
+  "services": {
+
+    "site": {
+      "endpoint": "www.your.domain.edu:80", // Drupal main page
+      "enabled": true
+    },
+
+    "ehs": {
+      "endpoint": "www.your.domain.edu:6701", // How ehs will be reachable from clients
+      "enabled": true
+    }, 
+
+    "mhs": {
+      "endpoint": "www.your.domain.edu:6721",  // How mhs will be reachable from clients
+      "endpoint2": "www.your.domain.edu:6722", // How mhs will be reachable from managers
+      "enabled": true
+    }, 
+
+    "redis": {
+      "endpoint": "localhost:6379", // Refers to Redis installation
+      "enabled": true
+    }, 
+
+    "ths": {
+      "enabled": false
+    },
+
+    // Set log level to 0 if you want to see only messages from the ETS SS
+    "log": {
+      "level": 4,
+      "append_to": "/var/log/ets/ets.log"
+    },
+
+    "stash": {
+      "backend": "redis", // "redis" or "file"
+      "file": "/tmp/ets_stash.db" // Used only if backend == "file"
+    },
+
+    "stats": {
+      "interval": 3,
+      "enabled": 0
+    }
+
+  }
+    
+}

@@ -1,0 +1,16 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "description": "Entry point server for the ETS project",
+  "author": "Claudio Cicali <claudio.cicali@gmail.com>",
+  "main": "server.js",
+  "dependencies": {
+    "redis": ">=0.6.7",
+    "sockjs": ">=0.1.0",
+    "sockjs-client": ">=0.1.0",
+    "nstore": ">=0.5.1",
+    "step": ">=0.0.4",
+    "winston": ">=0.0.0"
+  },
+  "engine": "node >=0.6.0"
+}

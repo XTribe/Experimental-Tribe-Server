@@ -1,0 +1,31 @@
+
+This document presents the necessary step to install and run the ETS
+Server Suite components.
+
+
+Install
+- node.js
+- npm
+- redis
+
+
+SETTING UP & RUNNING THE ETS SERVER SUITE
+=========================================
+
+Note: there is no need to be a super user to install the ETS SS
+
+- Enter the directory and run "bin/server.sh install"
+- If the installation process ends without errors and you already have edited
+  the config.json file (as proposed by the installation procedure itself)
+  you'll now be ready to run the server
+  - First of all you should run "bin/server.sh test" and see if everything is
+    all right. You could possibily receive an error regarding the web site
+    not being accessible. Until then you can't run the server.
+  - Run the site web server (the real one or the Development Server)
+  - Run the server with "bin/server.sh start"
+    The server will run every service (mhs, ehs, ths) and then will go into
+    the background.
+- The setup.sh script accepts also the "log", "stop", and "status" command.
+  Interactively read the log with "log", see which components are on with "status"
+  and stop the whole process with "stop"
+

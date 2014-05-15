@@ -1,0 +1,69 @@
+
+{
+
+  "ets_key": "parola segreta",
+
+  "run_as": "www-data",
+
+  "services": {
+
+    "proxy": {
+      "endpoint": "*:80",
+      "enabled": true
+    },
+
+    "site": {
+      "endpoint": "www.xtribe.eu:8080",
+      "enabled": true
+    },
+
+    "ehs": {
+      "endpoint": "ehs.xtribe.eu:6701",
+      "enabled": true
+    }, 
+
+    "mhs": {
+      // From web clients
+      "endpoint": "mhs.xtribe.eu:6721",
+      // From managers and as the default manager
+      // The proxy needs a different hostname for each service
+      "endpoint2": "mhs2.xtribe.eu:6722",
+      "enabled": true
+    }, 
+
+    "redis": {
+      "endpoint": "localhost:6379",
+      "enabled": true
+    }, 
+
+    "mon": {
+      "endpoint": "localhost:6767",
+      "enabled": false
+    },
+
+    "ths": {
+      "enabled": false
+    },
+
+    // At the moment this is used only by socket.io internal messages
+    // Set log level to 0 if you want to see only messages from the ETS SS
+    "log": {
+      "level": 4,
+      "append_to": "/var/log/ets/ets.log"
+    },
+
+    "stash": {
+      // "redis" or "file"
+      "backend": "redis",
+      // Used only if backed == "file"
+      "file": "/tmp/ets_stash.db"
+    },
+
+    "stats": {
+      "interval": 3,
+      "enabled": 0
+    }
+
+  }
+    
+}
