@@ -32,4 +32,4 @@ This folder contains template for Redis and ETS processes configuration, that mu
 
 ## Tutorial
 
-Please refer to http://man.xtribe.eu/
+Please refer to http://man.xtribe.eu/ 

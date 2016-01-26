@@ -6,7 +6,7 @@ Server Suite components.
 Install
 - node.js
 - npm
-- redis
+- redis 
 
 
 SETTING UP & RUNNING THE ETS SERVER SUITE
