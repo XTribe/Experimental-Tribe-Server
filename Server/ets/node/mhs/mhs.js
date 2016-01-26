@@ -2,11 +2,10 @@
 
   MHS - Message Handling Server
   
-  Rappresenta il sistema che tiene connessi tutti i client del gioco
-  e trasmette da e verso il manager
-
-  In base al gioco, MHS sa a quale manager dovrà parlare
+  Represent the system which keeps connected all game clients
+  and transmit to and from the manager.
   
+  Depending from the game, MHS will know to which manager address his communications.  
 */
 
 var Http    = require('http')
@@ -23,7 +22,8 @@ var Http    = require('http')
   , Crypto  = require("crypto")
   , Client  = require("client").Client
   , Instance = require('instance')
-  
+
+// cfg contains configuration parameter taken from ets config.json (currently located in ets/conf/config.json)
 var cfg = require('config').read();
 
 var startedAt = Date.now();
@@ -72,7 +72,7 @@ function main() {
     site = Url.parse("http://" + cfg.services.site.endpoint);
   }
 
-  /* Server su quale si ricevono le comunicazione dei vari manager */
+  /* Server on which communication of the managers are received. */
   server2 = Http.createServer();
   server2.listen(port2);
   
@@ -97,7 +97,7 @@ function main() {
   MgrTools.pubsub = pub;
   
   var i;
-  
+
   // Client connection
   sockjs.on('connection', function(socket) {
 
@@ -109,8 +109,10 @@ function main() {
 
     stats.connectedClients.value++;
     
-    // Message from the client
+    // Messages from the client
     socket.on('data', function(data) {
+
+      //log.verbose("RECEIVED MEX FROM CLIENT: "+JSON.stringify(data));
 
       stats.receivedMessages.value++;
 
@@ -127,12 +129,15 @@ function main() {
 
       if (msgIn.topic != 'ready' &&
           msgIn.topic != 'forward' &&
-          msgIn.topic != 'dbg_create') {
+          msgIn.topic != 'dbg_create' &&
+          msgIn.topic != 'over' /*&&
+          msgIn.topic != 'userdata' && 
+          msgIn.topic != 'my_userdata'*/) {
         client.sendError("Unrecognized system topic (" + msgIn.topic + ")", log);
         return;
       }
-      
-      dm('client', 'me', msgIn.topic + (msgIn.topic == 'forward' ? ' ' + (Tools.isDef(msgIn.params.topic) ? msgIn.params.topic : '') : ''));
+
+      // dm('client', 'me', msgIn.topic + (msgIn.topic == 'forward' ? ' ' + (Tools.isDef(msgIn.params.topic) ? msgIn.params.topic : '') : ''));
 
       // Use this message to create a bogus instance bypassing the ETS (for debugging purposes)
       if (msgIn.topic == 'dbg_create') {
@@ -159,10 +164,9 @@ function main() {
         , guid = msgIn.guid
         , instance;
 
-      // Salva la sessione per l'utente collegato
-      // La chiave di ogni sessione attiva è instanceid+guid, perché in teoria
-      // lo stesso giocatore può partecipare a più instance. Non è possibile per
-      // un giocatore partecipare due volte nello stesso instance
+      /* Saves session for logged user.
+      The key of every active session is instanceid=guid, because the same player
+      can join several instances. It is not possible for a player to join two times the same instance. */
 
       Sessions.set(iId, guid, client.socket.id, uId);
 
@@ -173,50 +177,44 @@ function main() {
           return;
         }
 
-        // Verifica che l'utente sia uno di quelli registrati nell'instance
+        // Verify the user is one of those registered to the instance
         if (-1 === instance.users.map(function(u) { return u.guid }).indexOf(guid)) {
           client.sendError("You are not part of this instance", log);
           return;
         }
 
-        // Qualsiasi messaggio su un esperimento terminato, produce un errore
+        // Any message on a terminated experiment, produce an error
         if (instance.ended) {
           client.sendError("Cannot restart an ended experiment", log);
           return;
         }
         
         Experiments.get(site, eId, function(error, experiment) {
-  
+          
+          //log.verbose("Experiments.get msgIn: "+JSON.stringify(msgIn));
+
           if (error) {
             client.sendError("Error while retrieving experiment data (" + error + ")", log);
             return;
           }
   
-          // Dati che servono in fase di disconnessione
+          // Data needed at the time of the disconnection
           client.set('iId', instance.id);
           client.set('eId', experiment.eId);
           client.set('uId', uId);
           
-          // Troviamo (o creiamo) la connessione verso il manager per il nostro instance
+          // Find (or create) connection to the manager for our instance
           var gw = MgrTools.findGateway(experiment, iId);
 
           var msgOut = {
-            clientId:   guid, // Il manager lo userà come identificativo univoco dell'utente
-            userId:     MgrTools.getHashedUid(uId),  // Generiamo un hash dell'uid ad uso del manager
-            instanceId: iId,  // Il instance ID è un valore che può essere passato anche al manager
+            clientId:   guid, // The manager will use it as unambiguos id of the user
+            userId:     MgrTools.getHashedUid(uId),  // Generate an hash of the uid for use of the manager
+            instanceId: iId,  // instance ID is a value that can be passed to the manager
             experiment: {
               id: eId,
               town: experiment.data.town
             }
           };
-
-          if ('ready' == msgIn.topic) {
-            // Save the state of the instance so we publish the READY channel one time only
-            if (!instance.started) {
-              pub.publish(Pubsub.channels.INSTANCE_READY, {eId: instance.eId, uId: uId, site: site});
-              Instances.setStarted(instance, true);
-            }
-          }
 
           if ('forward' == msgIn.topic) {
             // Message to be delivered as a in-experiment message
@@ -229,12 +227,52 @@ function main() {
             msgOut.params = msgIn.params;
           }
 
-          dm('me', 'manager', msgIn.topic == 'forward' ? msgOut.topic : msgIn.topic);
+          // Along with ready message, userdata have to be sent
+          if ('ready' == msgIn.topic) {
+            // Save the state of the instance so we publish the READY channel one time only
+            if (!instance.started) {
+              pub.publish(Pubsub.channels.INSTANCE_READY, {
+                 eId: instance.eId,
+                 uId: instance.users.map(function(u) { return u.uId }),
+                 guid: instance.users.map(function(u) { return u.guid }),
+                 iId: instance.id,
+                 site: site});
+              Instances.setStarted(instance, true);
+            }
+            
+            // From the instance user array, filter the user who sent the request and give back ONLY his own data
+            if (experiment.data.userdata_sending=="1") {
+                var userdataToReturn = instance.users.filter(function(u) {
+                if (String(msgIn.guid)==String(u.guid)) {
+                  return true;
+                }else{
+                  return false;
+                }
+              });
+              userdataToReturn=userdataToReturn[0];
+              // Remove uid from data that are to be sent (security sake)
+              delete userdataToReturn["guid"];
+              delete userdataToReturn["uId"];
+              delete userdataToReturn["data"]["uId"];
+
+              // Usera Data gets filled inside ets_services_user_info in ets.services.inc
+             msgOut.params = userdataToReturn;
+            };
+          }
+
+          /* Messages 'over' coming directly from clients, just for the sake of simplicity get processed same way that if it came from the manager, in order to be processed
+          and forwarded to all clients. Then it will be forwarded to manager too. (see subsequent gw.forward)*/
+          if (msgIn.topic == 'over' /*|| msgIn.topic == 'my_userdata'*/) {
+            var msgOutOver = msgIn;
+            msgOutOver.recipient='system';
+            msgOutOver.instanceId=msgIn.iId;
+            e = MgrTools.processManagerMessage(instance, msgIn, site);
+          }
 
           // Forward the message to the manager and receive manager's response
           // as an array of messages
+          // log.verbose("forwarding "+JSON.stringify(msgOut));
           gw.forward(msgOut, function(err, messages) {
-
             if (err) {
               client.sendError("Error communicating with the experiment manager (" + err + ")", log);
               return;
@@ -248,7 +286,6 @@ function main() {
                 return;
               }
             }
-            
           });
           
         }); // get experiment
@@ -288,10 +325,10 @@ function main() {
         ,
         
         function(err, data) {
-          
+
           if (err || !instance) return;
 
-          // Mandiamo al manager END o ABORT a seconda se l'instance è finita o meno
+          // Send to the manager END or ABORT depending if the instance is finished or not
           var msgOut = {
             sender:     C_SYSTEM,
             topic:      instance.ended ? 'end' : 'abort',
@@ -304,7 +341,7 @@ function main() {
             }
           };
 
-          // Comunichiamo un abort agli altri client connessi
+          // Tell an 'abort' to the other connected clients
           if (!instance.ended) {
             MgrTools.broadcast(instance, {topic: 'abort'}, client.socket.id);
           }
@@ -314,10 +351,22 @@ function main() {
             gw.forward(msgOut, function() { /* No return data needed */ });
           }
 
-          // Se un client si disconnette, consideriamo l'istanza terminata
-          // In un futuro questo non sarà sempre vero, perché magari a fronte di
-          // una disconnessione verrà inserito nel gioco un altro giocatore in
-          // attesa o un bot.
+          /* If a client disconnects, we consider the instance terminated.
+      	  In the future, it will not be always true, for, when a user disconnects, 
+      	  a bot or a pending player could replace him.  */
+      		
+      	  // Publishing instance_disconnects in case the user disconnects before concluding the game. 
+          // Without this message statistic cannot distinguish if the instance is still alive or dropped
+      	  if (!instance.ended) {
+            pub.publish(Pubsub.channels.INSTANCE_ERROR, {
+          		eId: data.eId, 
+          		iId: instance.id,
+          		uId: MgrTools.getHashedUid(uId), 
+          		guid: sess.guid,
+          		site: site
+            });
+          }  
+
           Instances.setEnded(instance, true)
         }
       )
@@ -329,8 +378,7 @@ function main() {
   }); // Channel connection
 
   /* @TODO
-   * I messaggi possono arrivare come risposta da una richiesta, ma anche
-   * direttamente dal manager
+   * Messages can arrive as a response to a request or directly from the manager
    */
   server2.on('request', function(req, res) {
     
@@ -398,14 +446,14 @@ function main() {
   });
 }
 
-// Modello che gestisce tutte le sessioni all'interno dei instance
-// Mantiene l'associazione tra sessionId e userId
+// Model that manages every session inside instances
+// Keeps association between sessionId and userId
 var Sessions = {
   
-  // Indice sul instance ("Quali utenti e sessioni per un dato instance?")
+  // Index on instance ("Which users and sessions for a certain instance?")
   sessions: {},
   
-  // Indice per il lookup per la get() ("Quale instance e utente per una data sessione?")
+  // Index for lookup for the get() ("Which instance and user for a certain session?")
   sessions_idx: {},
   
   reset: function() {
@@ -413,8 +461,7 @@ var Sessions = {
     this.sessions_idx = {};
   },
   
-  // Crea in memoria un nuovo oggetto di tipo sessione, o aggiorna
-  // uno già esistente
+  // Creates a session object, or updates an existent one
   set: function(iId, guid, socketId, uId) {
 
     if (typeof this.sessions["i" + iId] == 'undefined') {
@@ -434,7 +481,7 @@ var Sessions = {
     };
   },
   
-  // Recupera un oggetto sessione dalla memoria dato il instance id e lo user id
+  // Retrieve a session object from memory given the instance id and the user id
   find: function(iId, guid) {
     if (!this.sessions["i" + iId] || this.sessions["i" + iId].length === 0) {
       return null;
@@ -450,7 +497,7 @@ var Sessions = {
     return null;
   },
   
-  // Ritorna uId e iId dato dato l'id della sessione
+  // Return uId and iId given the session id
   get: function(sId) {
     if (typeof this.sessions_idx[sId] == 'undefined') {
       return null;
@@ -461,12 +508,12 @@ var Sessions = {
     }
   },
   
-  // Ritorna tutte le sessioni di un determinato instance
+  // Return all the session of a given instance
   all: function(iId) {
     return this.sessions["i" + iId] || [];
   },
 
-  // Remove una sessione dalla memoria
+  // Remove a session from memory
   del: function(sId) {
     var self = this;
     this.instances().forEach(function(key) {
@@ -494,11 +541,11 @@ var MgrTools = {
   
   gateways: [],
   
-  // Usiamo una proprietà e non la variabile globale perché possiamo
-  // fare un mock da usare per i test
+  /* We use a property and not the global variable for we can 
+  create a mock to use for tests */
   conn: null,
   
-  // Il pubsub: per i test può essere disabilitato
+  // The pubsub: for tests it can be disabled
   pub: null,
 
   // Cache for hashed uId
@@ -512,9 +559,9 @@ var MgrTools = {
     this.pub = value;
   },
   
-  /* Validazione di un messaggio dal manager
-   * Ritorna un messaggio di errore oppure la stringa vuota
-   */
+  /* Validation of a message by manager
+  Returns an error message or an empty string
+  */
   validateManagerMessage: function(message) {
 
     if (!Tools.isObject(message)) {
@@ -547,35 +594,37 @@ var MgrTools = {
   },
   
   processManagerMessage: function(instance, message, site) {
-    
+
+    // log.verbose("RECEIVED MEX FROM MANAGER: "+JSON.stringify(message));
+
     if (Tools.isEmpty(message)) {
       return '';
     }
 
     var v = this.validateManagerMessage(message);
-    
+
     if (v != '') {
       return v;
     }
     
-    dm('manager', 'me', message.topic + " [" + message.recipient + "]");
+    //dm('manager', 'me', message.topic + " [" + message.recipient + "]");
     
-    // I controlli devono già essere stati fatti dalla validazione
+    // Controls must have been done during validation
     var i
       , s;
 
-    /* Gestione del messaggio di risposta del manager */
+    /* Management of the reply message from the manager */
     switch (message.recipient) {
       
       case C_CLIENT:
-
-        // userId is out guid
+        // log.verbose("MESSAGE CLIENT "+message.topic);
+        // userId is our guid
         s = Sessions.find(message.instanceId, message.clientId);
         if (!s) {
           return "Cannot find the session for the user";
         }
         
-        dm('me', 'client', 'forward [' + message.topic + ']'  + (message.broadcast ? ' (broadcast)' : ''));
+        //dm('me', 'client', 'forward [' + message.topic + ']'  + (message.broadcast ? ' (broadcast)' : ''));
         
         // Params for the FORWARD message
         var params = {
@@ -584,24 +633,109 @@ var MgrTools = {
         }
         
         if (message.broadcast) {
-          // Se si aggiunge un parametro finale, quella sessione verrà esclusa
+          // If a final parameter gets added, that session will be excluded
           this.broadcast(instance, {topic: 'forward', params: params || null}, message.includeSelf ? null : s.socketId);
         } else {
-          // Spedisce il messaggio al client originario
+          //  Send the message to the client that originated it
           Clients[s.socketId].send({topic: 'forward', params: params || null});
         }
         
         break;
       
       case C_SYSTEM:
-        
-        // At the moment Only the over "system" message can ben sent by a manager
+
+        // At the moment Only the over "system" message can ben sent by a manager and over from clients.
         switch (message.topic) {
-          
+          // The client is asking to the system for his *own* userdata
+          /*case 'my_userdata': 
+            s = Sessions.find(message.instanceId, message.guid);
+            if (!s) {
+              //return "Cannot find the session for the user";
+            }
+
+            // From the instance user array, filter the user who sent the request and give back ONLY his own data
+            var userdataToReturn = instance.users.filter(function(u) {
+              if (String(message.guid)==String(u.guid)) {
+                return true;
+              }else{
+                return false;
+              }
+            });
+            userdataToReturn=userdataToReturn[0];
+            // Remove uid from data that are to be sent (security sake)
+            delete userdataToReturn["uId"];
+            delete userdataToReturn["data"]["uId"];
+
+            // 'Data' gets filled inside ets_services_user_info in ets.services.inc
+            var msgOut = {
+              sender:     C_SYSTEM,
+              topic:      'my_userdata',
+              instanceId: instance.id, 
+              eId:   instance.eId,
+              params: userdataToReturn
+            };
+
+            // Sending back the message to the client
+            Clients[s.socketId].send(msgOut);            
+            break;
+          */
+
+          // The manager is asking to the system some userdata
+          /*case 'userdata':
+            if (String(message.instanceId)==String(instance.id)) {
+              // From the instance user array, filter data in order not to pass uid (security sake)
+              var userdataToReturn = instance.users.map(function(u) {
+                var a={}
+                a["guid"]=u.guid;
+                a["data"]=u.data;
+                delete a["data"]["uId"];
+                return a;
+              });
+
+              // 'Data' gets filled inside ets_services_user_info in ets.services.inc
+              var msgOut = {
+                sender:     C_SYSTEM,
+                topic:      'userdata',
+                instanceId: instance.id, 
+                eId:   instance.eId,
+                params: userdataToReturn
+              };
+            }else{
+              // TODO: how to send error on a wrong request
+              return "Invalid message from manager (wrong instanceId)";
+            }
+
+            // Sends to manager as a system message
+            var experiment = Experiments.retrieve(instance.eId, true);
+            var gw = MgrTools.findGateway(experiment, instance.id);
+            if (gw) {
+                gw.forward(msgOut, function(err, messages) {
+                  if (err) {
+                    client.sendError("Error communicating with the experiment manager (" + err + ")", log);
+                    return;
+                  }
+                  for (var i=0; i < messages.length; i++) {
+                    e = MgrTools.processManagerMessage(instance, messages[i], site);
+                    if (e != '') {
+                      log.error("Error processing message from manager: " + e);
+                      client.sendError(e, log);
+                      return;
+                    }
+                  }
+              });
+            }
+            
+            break;
+            */
           case 'over':
-            dm('me', 'client', 'over');
-            // The manager has finished.
-            this.broadcast(instance, {topic: 'over', params: message.params || null});
+            // broadcast to all clients
+            this.broadcast(instance, {
+              // clientId: message.clientId, 
+              // instanceId: message.instanceId, 
+              // experiment: message.experiment, 
+              sender:'system', 
+              topic: 'over', 
+              params: message.params || null});
 
             // The score could be a single value or an hash indexed on the user id
             var score = '', to, sess;
@@ -635,11 +769,12 @@ var MgrTools = {
                 , score: score
                 , site: site
                 , iId: instance.id
-                , uId: instance.users.map(function(u) { return u.uId })
+		            , uId: instance.users.map(function(u) { return u.uId })
+		            , guid: instance.users.map(function(u) { return u.guid })
               });
             }
-            
-            Instances.setEnded(instance, true);
+           
+            //Instances.setEnded(instance, true);
 
             break;
           
@@ -652,7 +787,7 @@ var MgrTools = {
     return ''; // OK
   },
   
-  // FIXME errore: il gateway è a livello di esperimento, non di singola istanza!
+  // FIXME error: the gateway is at the level of the experiment, not of the single instance!
   findGateway: function(experiment, iId) {
 
     if (!experiment || !iId) {
@@ -680,7 +815,7 @@ var MgrTools = {
 
     gw.instanceId = iId;
     gw.endPoint = parts.pathname;
-    // FIXME: HTTPS e test di autenticazione
+    // FIXME: HTTPS and authentication test
     gw.client = Manager.createClient((parts.auth ? (parts.auth + "@") : '' ) + parts.hostname, parts.port);
 
     this.gateways.push(gw);
@@ -695,6 +830,21 @@ var MgrTools = {
     for (var i = 0; i < s.length; i++) {
       if (!exclude || exclude != s[i].socketId) {
         Clients[s[i].socketId] && Clients[s[i].socketId].send(message);
+        
+        // In case of over, the message should be sended to manager too. The above code sent message to
+        // clients but not to manager. The underlying code sends to manager, too.
+        if(message.topic=='over'){
+          var msgOut = {
+            sender:     C_SYSTEM,
+            topic:      'over',
+            instanceId: instance.id
+          };
+          var experiment = Experiments.retrieve(instance.eId, true);
+          var gw = MgrTools.findGateway(experiment, instance.id);
+          if (gw) {
+            gw.forward(msgOut, function() { });
+          }
+        }
       }
     }
   },
@@ -775,36 +925,35 @@ exports.MgrTools = MgrTools;
 
 // Debug Message
 function dm(from, dest, str) {
-
   if (!log) {
     return;
   }
-// console.log(TOGLI QUESTO RETURN);  
-return;
+
+// console.log(GET RID OF THIS RETURN);  
+// return;
 
   switch (true) {
 
     case (dest == 'me' && from == 'client'):
-      log.verbose("===> [" + str + "]");
+      log.verbose("From "+from+" to "+dest+": ===> [" + str + "]");
       break;
 
     case (dest == 'client' && from == 'me'):
-      log.verbose("<=== [" + str + "]");
+      log.verbose("From "+from+" to "+dest+": <=== [" + str + "]");
       break;
       
     case (dest == 'manager' && from == 'me'):
-      log.verbose("     [" + str + "] ===>");
+      log.verbose("From "+from+" to "+dest+":      [" + str + "] ===>");
       break;
       
     case (dest == 'me' && from == 'manager'):
-      log.verbose("     [" + str + "] <===");
+      log.verbose("From "+from+" to "+dest+":      [" + str + "] <===");
       break;
       
     default:
       log.verbose("===> ??? <===");
       break;
   }
-  
 }
 
 if (require.main === module) {

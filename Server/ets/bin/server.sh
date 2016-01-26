@@ -1,7 +1,8 @@
 #!/bin/bash
 
+#before was _LOGFILE: check why
 # This can be overridden via config.json
-_LOGFILE="/var/log/ets/ets.log"
+LOGFILE="/var/log/ets.log"
 
 C_OK="\E[1;42m OK \033[0m"
 C_KO="\E[1;41m KO \033[0m"
@@ -31,13 +32,26 @@ function check_node() {
 
 function stop() {
 
-  if [ ! -f /tmp/ets.pid ]; then
-    echo "Server is already stopped (no pid file)."
+  # getting processes pid from the port they are running on
+  ehs="$(fuser -n tcp 6701 2>/dev/null)"
+  mhs="$(fuser -n tcp 6721 2>/dev/null)"
+
+  if [ "$ehs" == "" ] && [ "$mhs" == "" ]; then
+    echo "Server is already stopped (no process available on ports)."
   else
     echo "Stopping server..."
-    kill $(cat /tmp/ets.pid)
-    rm -f /tmp/ets.pid
+    kill $ehs
+    kill $mhs
+    echo "Attention: If server was started at system boot, will be respawned after stopping it."
   fi
+
+  #if [ ! -f /tmp/ets.pid ]; then
+  #  echo "Server is already stopped (no pid file)."
+  #else
+  #  echo "Stopping server..."
+  #  kill $(cat /tmp/ets.pid)
+  #  rm -f /tmp/ets.pid
+  #fi
 
 }
 
@@ -73,10 +87,9 @@ function start() {
     exit 1
   fi
 
-  node server >> ${LOGFILE} 2>&1 &
+  node server >> ${LOGFILE} 2>>${LOGFILE} & 
   # This script is aimed to be used in a development environment, so use a "easy" dir
-  echo $! > /tmp/ets.pid
-
+  #echo ps -ef | pgrep -f "node server" > /tmp/ets.pid # collecting the pid in this way seems not to work anymore so i get the pid with fuser, knowing its port
 }
 
 cd `dirname $0`
@@ -100,11 +113,11 @@ hash node > /dev/null 2>&1 || {
   exit 1
 }
 
-if [ "${1}" != "install" ]; then
+#if [ "${1}" != "install" ]; then
  # LOGFILE=$(cat conf/config.json | grep -Po '"append_to"\s*:.*' | sed -n  's/.*:\s*"\(.*\)".*/\1/p')
  # [ "${LOGFILE}" = "" ] && LOGFILE=${_LOGFILE}
- LOGFILE=./ets.log
-fi
+ #LOGFILE=./ets.log
+#fi
 
 # Is npm installed?
 hash npm > /dev/null 2>&1 || {
@@ -120,15 +133,16 @@ hash npm > /dev/null 2>&1 || {
 #fi
 
 # Check if the system is correctly installed
-if [ "${1}" != "install" ] && [ ! -f .install ]; then
-  echo The system is not correctly installed
-  echo Please run $(basename $0) install
-  exit 1
-fi
+# Betta: this is commented for the new install procedure doesn't create this file .install in the ets directory
+#if [ "${1}" != "install" ] && [ ! -f .install ]; then
+#  echo The system is not correctly installed 1
+#  echo Please run $(basename $0) install
+#  exit 1
+#fi
 
 if [ "${1}" != "install" ] && [ ! -f "conf/config.json" ]; then
   echo The config file is missing
-  echo The system is not correctly installed
+  echo The system is not correctly installed 2
   echo Please run $(basename $0) install
   exit 1
 fi

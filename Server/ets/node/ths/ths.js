@@ -2,9 +2,16 @@
 
   THS - Transaciont Handling Server
   
-  Rappresenta il sistema che aggiorna le statistiche riguardo le transazioni
-  di creazione gioco e fine gioco
+  Represent the system that updates statistics about transaction
+  of game creation and ending
 
+  Instance possible events:
+  - Started: The number of users needed is reached so the instance is started (In this case, 'User' contains Drupal User id and guid of each user that joined the instance)
+  - Performed: The manager sent a 'ready' message
+  - Ended: The manager sent an 'over' message, which means the instance is ended in the correct way.<br>
+  - Dropped (eventually): The users all leaved before beginning the instance or something prevented the game to begin (the manager is not responding, for example).<br>
+  - Error (eventually): An error occurred. For example, a user leaved during the game. (At the moment, this is considered closing the instance.)<br>
+  - Hunged: A system error occured and the instances has been forcedly closed as the Xtribe restarted.
 */
 
 var Logger = require('logger')
@@ -48,15 +55,35 @@ function main() {
   sub.subscribe(Pubsub.channels.INSTANCE_DROP, function(message) {
     updateStatsFor('experiment', 'inst_dropped', message);
   })
+
+  sub.subscribe(Pubsub.channels.INSTANCE_STARTED, function(message) {
+    updateStatsFor('experiment', 'inst_started', message);
+  })
   
+  sub.subscribe(Pubsub.channels.INSTANCE_ERROR, function(message) {
+    updateStatsFor('experiment', 'inst_error', message);
+  })
+
+  sub.subscribe(Pubsub.channels.INSTANCE_HUNGED, function(message) {
+    updateStatsFor('experiment', 'inst_hunged', message);
+  })
+
   function updateStatsFor(subject, stat, data) {
-    var url = '/ets/services/' + ('experiment' == subject ? 'exp-stats' : 'user-stats')
+    
+    if (stat=='inst_hunged') {
+      var url = '/ets/services/close-hunged-instances';
+    }else{
+      var url = '/ets/services/' + ('experiment' == subject ? 'exp-stats' : 'user-stats');
+    }
+
+    //log.verbose("EVENT: "+stat+" sent to "+url+" with data "+JSON.stringify(data));
+    
     data.stat = stat;
     data.timestamp = 0|(Date.now() / 1000);
     Drupal.setSite(data.site);
     Drupal.post(url, data, function(error, data) {
       if (error || parseInt(data) < 0) {
-        log.error("Error trying to update " + stat + " " + subject + " statistic: " + (error ? error : data));
+        log.error("Error trying to update " + stat + " subject: " + subject + " statistic: " + (error ? error : data));
         return;
       } 
     });

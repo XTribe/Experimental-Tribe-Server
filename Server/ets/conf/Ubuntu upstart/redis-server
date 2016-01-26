@@ -34,7 +34,6 @@ case "$1" in
 	chmod 755 $RUNDIR
 	if start-stop-daemon --start --quiet --umask 007 --pidfile $PIDFILE --chuid redis:redis --exec $DAEMON -- $DAEMON_ARGS
 	then
-#		this is required to let ets-server wait for redis start
 		initctl emit redis-server-started	
 		echo "$NAME."
 	else

@@ -2,8 +2,7 @@
 
   EHS - Expriments Handling Server
   
-  Rappresenta il sistema che gestisce la creazione e il join degli utenti
-  negli esperimenti.
+  Represent the system that manage creation and user's join during experiments.
   
 */
 
@@ -35,7 +34,8 @@ var Pubsub  = require('pubsub')
   , Experiments = require('experiment')
   , Http    = require('http')
   , Sockjs  = require('sockjs')
-  , Client  = require('client').Client;
+  , Client  = require('client').Client
+  , util = require('util');
 
 var cfg = require('config').read()
 
@@ -63,7 +63,6 @@ var pub
 function main() {
 
   var site;
-
   pub = Pubsub.createClient(cfg.services.stash.backend == 'file');
   log = Logger.createClient('EHS');
   stash = Stash.createClient();
@@ -71,11 +70,15 @@ function main() {
   log.info("Starting EHS (" + Tools.endpointGetPort(cfg.services.ehs.endpoint) + ")");
 
   Instance.reset();
-  
+
   var site = Url.parse(cfg.services.site.endpoint);
   if (!site.protocol) {
     site = Url.parse("http://" + cfg.services.site.endpoint);
   }
+
+  /* Close instances that remained open, after ehs went offline the last time. This means, if mhs/ehs died for some error,
+  ongoing games instances at that time, remained hunged, will be closed. */
+  Instance.closeHungedInstances(pub,site);
 
   /* Statistics publisher */
   if (cfg.services.stats.enabled > 0) {
@@ -150,6 +153,11 @@ function main() {
         },
 
         function(err, experiment) {
+            /*pub.publish(Pubsub.channels.INSTANCE_ERROR, {
+              eId: experiment.data.eId, 
+              iId: Object.keys(global.INSTANCE_MODELS),
+              site: ""
+            });*/
 
           if (err) {
             client.send({topic: 'refuse', params: {reason: err}});
@@ -169,10 +177,9 @@ function main() {
             return;
           }
 
-          /* Registriamo alcuni dati nel client che servono al 
-           * momento della disconnessione. La disconnessione avviene
-           * quando l'utente cambia pagina (per scelta sua o perché lo 
-           * facciamo andare alla pagina del gioco)
+          /* Store some data in the client needed at the moment of disconnection.
+	  Disconnection happens when user change page (on his own accord or for we
+	  made him go to the game page)
            */
           client.set('_user_data_', {guid: guid, uId: uId, site: site});
           
@@ -181,7 +188,7 @@ function main() {
           if ('join' == message.topic) {
             processJoin(client, experiment, account, site);
           } else {
-            /* FIXME da un punto di vista semantico qui il caso è che non ha un 'join', per cui il refuse non sarebbe adatto */
+            /* FIXME from a semantic point of view this is the case in which there is no join so the 'refuse' is not really appropriate */
             client.send({topic: 'refuse', params: {reason: "I do not understand " + message.topic}});
             log.warning("Attempt to join an inactive experiment");
           }
@@ -224,7 +231,12 @@ function main() {
           instance.notifyUsers('status');
 
           if (0 == users.length) {
-            pub.publish(Pubsub.channels.INSTANCE_DROP, {eId: instance.data.eId, site: userData.site});
+            pub.publish(Pubsub.channels.INSTANCE_DROP, {
+		          eId: instance.data.eId, 
+		          iId: instance.data.id,
+		          uId: userData.uId, 
+		          guid: userData.guid,
+		          site: userData.site});
             instance.notifyManager('drop');
           }
               
@@ -249,7 +261,7 @@ function processJoin(client, experiment, account, site) {
 
     function(err) {
       // Find an instance to insert the user into
-      Instance.addUserToInstance(experiment.eId, account, experiment.data.exactNUsers, this);
+      Instance.addUserToInstance(experiment.eId, account, experiment.data.exactNUsers, experiment.data.share_languages,this);      
     }
     
     ,
@@ -259,15 +271,24 @@ function processJoin(client, experiment, account, site) {
       if (err || !instanceData) {
         client.send({topic: 'refuse', params: {reason: err}});
         log.error("Error joining the instance: " + err);
+
         return;
       }
 
       var instance;
       
+      //log.verbose("global.INSTANCE_MODELS[instanceData.id]: " + global.INSTANCE_MODELS[instanceData.id])
       if ('undefined' == typeof global.INSTANCE_MODELS[instanceData.id]) {
         log.verbose("New instance created " + instanceData.id)
         instance = new InstanceModel(instanceData, mGw);
-        pub.publish(Pubsub.channels.INSTANCE_NEW, {eId: instance.data.eId, site: site});
+	
+      	pub.publish(Pubsub.channels.INSTANCE_NEW, {
+      		eId: instance.data.eId, 
+      		iId: instanceData.id, 
+      		uId: account.uId, 
+      		guid: account.guid,
+      		site: site});
+          
         global.INSTANCE_MODELS[instanceData.id] = instance
       } else {
         // Refresh data of the instance
@@ -286,13 +307,22 @@ function processJoin(client, experiment, account, site) {
     
       instance.notifyUsers('status');
 
-      pub.publish(Pubsub.channels.INSTANCE_JOIN, {eId: experiment.eId, uId: account.uId, guid: account.guid, site: site});
+      pub.publish(Pubsub.channels.INSTANCE_JOIN, {
+        eId: experiment.eId, 
+        uId: account.uId, 
+        guid: account.guid, 
+        site: site});
 
       client.send({topic: 'accept'});
   
       if (instanceData.complete) {
 
-        log.verbose("Instance " + instance.data.id + " is complete")
+        pub.publish(Pubsub.channels.INSTANCE_STARTED, {
+          eId: experiment.eId, 
+          iId: instanceData.id, 
+          uId: instanceData.users.map(function(u) { return u.uId }),
+          guid: instanceData.users.map(function(u) { return u.guid }),
+          site: site});
 
         // Let's ping the manager
         mGw.ping(experiment.eId, function(err) {
@@ -310,8 +340,8 @@ function processJoin(client, experiment, account, site) {
             client.socket.close();
             instance = undefined;
           });
-        });        
-      }
+        });  
+        }
     }
   );
 }
@@ -337,7 +367,7 @@ ManagerGateway.prototype.acquireClient = function() {
 
   this.endPoint = parts.pathname;
 
-  // FIXME: HTTPS e test di autenticazione
+  // FIXME: HTTPS and authentication test
   this.client = Manager.createClient((parts.auth ? (parts.auth + "@") : '' ) + parts.hostname, parts.port);
   
   return true;  
@@ -359,8 +389,23 @@ ManagerGateway.prototype.ping = function(eId, cb) {
   this.forward(msgOut, function(error, response) {
 
     if (error) {
-      console.log(self.experiment.data.managerURI);
       cb & cb("Cannot connect to the experiment manager (" + self.experiment.data.managerURI + ") " + error);
+   
+        var site = Url.parse(cfg.services.site.endpoint);
+        if (!site.protocol) {
+          site = Url.parse("http://" + cfg.services.site.endpoint);
+        }
+
+        // Object.keys(global.INSTANCE_MODELS) retrieve the instance id
+        // If the manager is not responding the instance get closed
+        pub.publish(Pubsub.channels.INSTANCE_DROP, {
+              eId: self.experiment.data.eId, 
+              iId: Object.keys(global.INSTANCE_MODELS), 
+              /*uId: account.uId, 
+              guid: account.guid,*/
+              site: site
+        });
+
       return;
     }
     
@@ -439,7 +484,7 @@ InstanceModel.prototype.notifyUsers = function(topic, params) {
     // TODO: verificare che il client sia attivo
     userData = client.get('_user_data_');
     if (!userData) {
-      log.error("Client has not user data (status)")
+      error("Client has not user data (status)")
     } else {
       _params.guid = userData.guid;
       client.send({topic: topic, params: _params});
@@ -451,7 +496,7 @@ InstanceModel.prototype.listenToManager = function(cb) {
   if (!this.managerGateway) {
     return;
   }
-  /* FIXME occorre implementarlo tramite HTTP
+  /* FIXME it must be implemented via HTTP
   var instance = this;
   this.managerGateway.conn.on('data', function(data) {
     var message = JSON.parse(data);
